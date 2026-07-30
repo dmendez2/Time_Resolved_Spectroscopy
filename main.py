@@ -1,22 +1,27 @@
-# This Python file uses the following encoding: utf-8
+# This Python file uses the following encoding: ascii
 import sys
+import time
 import pyvisa
 import numpy as np
 from pathlib import Path
+from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
-from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
+from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer, QAbstractListModel, Qt, QModelIndex, QByteArray
 
 class HR320_Emulator:
     def __init__(self, gpib_address):
         self.gpib_address = gpib_address
         self.buffer = b'b'
+        self.current_char = 'b'
+        self.buffer_index = 0
 
         self.min_step = 0
         self.max_step = 13000
 
+        self.is_spectrometer_booted = False
         self.is_motor_initialized = False
         self.is_motor_speed_set = False
         self.is_motor_busy = False
@@ -29,9 +34,16 @@ class HR320_Emulator:
         self.current_motor_position = 0
         self.target_motor_position = 0
 
-    def write(self, query):
+    def write_raw(self, query):
+        query = query.decode('ascii')
+
         if(query == 'O2000\x00'):
             self.buffer = b'*'
+        elif(query == ' '):
+            if self.is_spectrometer_booted:
+                self.buffer = b'F'
+            else:
+                self.buffer = b'B'
         elif(len(query) == 1):
             if query == 'A':
                 self.is_motor_initialized = True
@@ -47,7 +59,7 @@ class HR320_Emulator:
             elif query == 'K':
                 self.buffer = b'o'
             elif query == 'L':
-                if self.is_motor_intialized:
+                if self.is_motor_initialized:
                     self.is_motor_busy = False
                     self.buffer = b'o'
                 else:
@@ -68,17 +80,16 @@ class HR320_Emulator:
                     self.buffer = b'o'
                 else:
                     self.buffer = b'b'
-            elif query == 'C':
+            elif cmd == 'C':
                 if self.is_motor_initialized and self.is_motor_speed_set:
                     self.motor_id = int(delimited_parameters[0])
-                    self.buffer = (str(self.min_motor_frequency) + str(self.max_motor_frequency) + str(self.motor_ramp_time)).encode('utf-8')
+                    self.buffer = ('o' + str(self.min_motor_frequency) + ',' + str(self.max_motor_frequency) +  ',' + str(self.motor_ramp_time) + '\r').encode('ascii')
                 else:
                     self.buffer = b'b'
             elif cmd == 'F':
                 if self.is_motor_initialized and self.is_motor_speed_set:
                     self.motor_id = int(delimited_parameters[0])
                     self.target_motor_position = self.current_motor_position + int(delimited_parameters[1])
-                    print("Target Motor Position: ", self.target_motor_position)
                     self.is_motor_busy = True
                     self.buffer = b'o'
                 else:
@@ -93,23 +104,83 @@ class HR320_Emulator:
                     self.buffer = b'b'
             elif cmd == 'H':
                 if self.is_motor_initialized:
-                    print("Target: ", self.target_motor_position)
-                    print("Current: ", self.current_motor_position)
                     self.motor_id = int(delimited_parameters[0])
-                    if self.current_motor_position < self.target_motor_position:
-                        self.current_motor_position += 20
-                    elif self.current_motor_position > self.target_motor_position:
-                        self.current_motor_position -= 20
-                    else:
-                        self.is_motor_busy = False
-                    self.buffer = ('o' + str(self.current_motor_position)).encode('utf-8')
+                    if self.is_motor_busy:
+                        if self.current_motor_position < self.target_motor_position:
+                            self.current_motor_position += 20
+                        elif self.current_motor_position > self.target_motor_position:
+                            self.current_motor_position -= 20
+                        else:
+                            self.is_motor_busy = False
+                    self.buffer = ('o' + str(self.current_motor_position) + '\r').encode('ascii')
                 else:
                     self.buffer = b'b'
 
-    def read_raw(self):
-        flushed_buffer = self.buffer
-        self.buffer = b'b'
-        return flushed_buffer
+    def read_bytes(self, bytes, break_on_termchar = False):
+        data = ''
+        decoded_buffer = self.buffer.decode('ascii')
+        for i in range(0, bytes):
+            self.current_char = decoded_buffer[self.buffer_index]
+            self.buffer_index += 1
+            data += self.current_char
+
+        if self.current_char == decoded_buffer[-1]:
+            self.buffer = b'b'
+            self.buffer_index = 0
+
+        return data.encode('ascii')
+
+class Instrument_Log(QAbstractListModel):
+
+    TimestampRole = Qt.UserRole + 1
+    InstrumentRole = Qt.UserRole + 2
+    MessageRole = Qt.UserRole + 3
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.log_queue = []
+
+    def rowCount(self, parent=QModelIndex()):
+        if parent.isValid():
+            return 0
+
+        return len(self.log_queue)
+
+    def data(self, index, role=Qt.DisplayRole):
+
+        if not index.isValid():
+            return None
+
+        if index.row() >= len(self.log_queue):
+            return None
+
+        log_entry = self.log_queue[index.row()]
+
+        if role == self.TimestampRole:
+            return log_entry["timestamp"]
+        elif role == self.InstrumentRole:
+            return log_entry["instrument"]
+        elif role == self.MessageRole:
+            return log_entry["message"]
+        else:
+            return None
+
+    def roleNames(self):
+        return {self.TimestampRole: QByteArray(b"timestamp"), self.InstrumentRole: QByteArray(b"instrument"), self.MessageRole: QByteArray(b"message")}
+
+    def append_log(self, instrument, message):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        log_entry = {"timestamp": timestamp, "instrument": instrument, "message": message}
+
+        row = len(self.log_queue)
+        self.beginInsertRows(QModelIndex(),row,row)
+        self.log_queue.append(log_entry)
+        self.endInsertRows()
+
+    def clear(self):
+        self.beginResetModel()
+        self.log_queue.clear()
+        self.endResetModel()
 
 class HR320_Interface:
     def __init__(self, gpib_address):
@@ -143,48 +214,55 @@ class HR320_Interface:
     def Convert_Step_Position_To_Wavelength(self, step_position):
         return step_position / self.steps_per_wavelength
 
-    def Query(self, cmd, *params):
+    def Write_To_HR320(self, cmd, *params):
         query = cmd
         if params:
-            if len(params) == 1:
-                query += str(params[0])
-            else:
-                for i in range(0, len(params)):
-                    if i == len(params) - 1:
-                        query += str(params[i])
-                    else:
-                        query += str(params[i]) + ','
-
-        if len(params) > 0:
+            query += ','.join(str(p) for p in params)
             query += '\r'
+        print("Query: ", query)
 
-        print("Testing Query: ", query)
-        self.hr320.write(query)
+        self.hr320.write_raw(query.encode('ascii'))
+        return
 
-        data = b'b'
+    def Read_From_HR320(self, is_known_bytes, is_carriage_return_terminated, expected_bytes = None):
+        if is_known_bytes == is_carriage_return_terminated:
+            return "INPUT ERROR"
+
         try:
-            data = self.hr320.read_raw()
-        except Exception as e:
-            print("Done:", e)
+            if is_known_bytes:
 
-        return data.decode('utf-8')
+                if expected_bytes <= 0:
+                    return "INPUT ERROR"
+
+                data = self.hr320.read_bytes(expected_bytes, break_on_termchar=False).decode('ascii')
+                return data
+
+            elif is_carriage_return_terminated:
+
+                self.hr320.read_termination = '\r'
+                data = self.hr320.read()
+
+                return data
+
+        except pyvisa.errors.VisaIOError:
+            print("TIMEOUT ERROR")
+            return "TIMEOUT ERROR"
 
     def Decrypt_Response(self, response):
         cleaned_response = response.rstrip()
         delimited_response = cleaned_response.split(',')
 
-        status_code = delimited_response[0][0]
+        confirmation_character = delimited_response[0][0]
         first_parameter = delimited_response[0][1:]
 
         decrypted_response = []
-        decrypted_response.append(status_code)
         decrypted_response.append(first_parameter)
 
         if len(delimited_response) > 1:
             for i in range(1, len(delimited_response)):
                 decrypted_response.append(delimited_response[i])
 
-        return decrypted_response
+        return confirmation_character, decrypted_response
 
     def Decrypt_Limit_Status(self, status):
         if type(status) != int:
@@ -211,65 +289,86 @@ class HR320_Interface:
             self.hr320 = self.rm.open_resource(self.gpib_address)
 
     def Boot_HR320(self):
-        response = self.Query('O2000\x00')
-        if response == '*':
-            print('Spectrometer Booted')
+        self.Write_To_HR320(' ')
+        response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
+        print("Response:", response)
+        print()
+        if response == 'TIMEOUT ERROR':
+            self.Reboot_HR320()
+        elif response == 'B':
+            self.Write_To_HR320('O2000\x00')
+            time.sleep(0.5) # Must wait 500 ms to ensure answer comes back
+            response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
+            print("Response:", response)
+            print()
+            if response == '*':
+                return True
+            elif response == 'b':
+                return False
+        elif response == 'F':
             return True
-        elif response == 'b':
-            print('Spectrometer Failed To Boot')
-            return False
+
+    def Reboot_HR320(self):
+        self.hr320.write_raw(bytes([222]))
+        time.sleep(0.2) # Must wait 200 ms to ensure spectrometer reboots
+        self.Boot_HR320()
 
     def Initialize_Motor(self):
-        response = self.Query('A')
+        self.Write_To_HR320('A')
+        response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
+        print("Response:", response)
+        print()
         if response == 'o':
-            print('Motor Initialized')
             return True
         elif response == 'b':
-            print('Motor Failed to Initialize')
             return False
 
     def Set_Motor_Speed(self):
-        response = self.Query('B', self.motor_id, self.min_motor_frequency, self.max_motor_frequency, self.motor_ramp_time)
+        self.Write_To_HR320('B', self.motor_id, self.min_motor_frequency, self.max_motor_frequency, self.motor_ramp_time)
+        response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
+        print("Response:", response)
+        print()
         if response == 'o':
-            print('Motor Speed Set')
-            return True
+            is_motor_speed_read, min_motor_frequency, max_motor_frequency, motor_ramp_time = self.Read_Motor_Speed()
+            if is_motor_speed_read:
+                if (min_motor_frequency == self.min_motor_frequency) and (max_motor_frequency == self.max_motor_frequency) and (motor_ramp_time == self.motor_ramp_time):
+                    print("Min motor frequency: ", self.min_motor_frequency)
+                    print("Max motor frequency: ", self.max_motor_frequency)
+                    print("Motor ramp time: ", self.motor_ramp_time)
+                    return True
         elif response == 'b':
-            print('Motor Speed Not Set')
             return False
 
     def Read_Motor_Speed(self):
-        response = self.Query('C', self.motor_id)
+        self.Write_To_HR320('C', self.motor_id)
+        response = self.Read_From_HR320(is_known_bytes = False, is_carriage_return_terminated = True)
+        print("Response:", response)
+        print()
         if response == 'b':
-            print("Failed to Read Motor Speed")
             return False, -1, -1, -1
         else:
-            decrypted_response = self.Decrypt_Response(response)
-            if decrypted_response[0] == 'o':
-                self.min_motor_frequency = int(decrypted_response[1])
-                self.max_motor_frequency = int(decrypted_response[2])
-                self.motor_ramp_time = int(decrypted_response[3])
+            confirmation_character, decrypted_response = self.Decrypt_Response(response)
+            if confirmation_character == 'o':
+                min_motor_frequency = int(decrypted_response[0])
+                max_motor_frequency = int(decrypted_response[1])
+                motor_ramp_time = int(decrypted_response[2])
 
-                print("Minimum Motor Frequency: ", self.min_motor_frequency, " Hz")
-                print("Maximum Motor Frequency: ", self.max_motor_frequency, " Hz")
-                print("Motor Ramp Time: ", self.motor_ramp_time, " ms")
-                return True, self.min_motor_frequency, self.max_motor_frequency, self.motor_ramp_time
+                return True, min_motor_frequency, max_motor_frequency, motor_ramp_time
 
     def Is_Motor_Busy(self):
-        response = self.Query('E')
+        self.Write_To_HR320('E')
+        response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 2)
+        print("Response: ", response)
 
         if response == 'b':
-            print('Failed to Query if Motor is Busy')
             return False, -1
         else:
-            decrypted_response = self.Decrypt_Response(response)
-            if decrypted_response[0] == 'o':
-                print('Motor Busy Status Polled')
+            confirmation_character, decrypted_response = self.Decrypt_Response(response)
+            if confirmation_character == 'o':
 
-                if decrypted_response[1] == 'q':
-                    print('Motor is Busy')
+                if decrypted_response[0] == 'q':
                     return True, True
-                elif decrypted_response[1] == 'z':
-                    print('Motor is Not Busy')
+                elif decrypted_response[0] == 'z':
                     return True, False
 
     def Move_Motor_Relative(self, target_wavelength):
@@ -279,14 +378,14 @@ class HR320_Interface:
 
         response = None
         if steps_to_move > 0:
-            response = self.Query('F', self.motor_id, steps_to_move)
+            self.Write_To_HR320('F', self.motor_id, steps_to_move)
         elif steps_to_move < 0:
-            response = self.Query('F', self.motor_id, steps_to_move - self.backlash_steps)
+            self.Write_To_HR320('F', self.motor_id, steps_to_move - self.backlash_steps)
         else:
             return False
 
+        response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
         if response == 'b':
-            print('Motor Failed to Move')
             return False
         elif response == 'o':
             if steps_to_move > 0:
@@ -294,80 +393,74 @@ class HR320_Interface:
             else:
                 self.is_motor_moving_in_positive_direction = False
 
-            print('Motor has moved ', steps_to_move, " Steps")
             return True
 
     def Backlash_Correction(self):
-        response = self.Query('F', self.motor_id, self.backlash_steps)
+        self.Write_To_HR320('F', self.motor_id, self.backlash_steps)
+        response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
 
         if response == 'b':
-            print('Motor Failed to Move')
             return False
         elif response == 'o':
             self.is_motor_moving_in_positive_direction = True
-            print('Motor has moved ', self.backlash_steps, " Steps")
             return True
 
     def Set_Motor_Position(self, current_wavelength):
         self.current_wavelength = current_wavelength
         self.current_motor_position = self.Convert_Wavelength_To_Step_Position(self.current_wavelength)
 
-        response = self.Query('G', self.motor_id, self.current_motor_position)
-        print(response)
+        self.Write_To_HR320('G', self.motor_id, self.current_motor_position)
+        response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
 
         if response == 'b':
-            print("Motor Position Not Set")
             return False
         elif response == 'o':
-            print("Motor Set to Position: ", self.current_motor_position)
             return True
 
     def Read_Motor_Position(self):
-        response = self.Query('H', self.motor_id)
+        self.Write_To_HR320('H', self.motor_id)
+        response = self.Read_From_HR320(is_known_bytes = False, is_carriage_return_terminated = True)
 
         if response == 'b':
-            print('Failed to Read Motor Position')
             return False, -1
         else:
-            decrypted_response = self.Decrypt_Response(response)
+            confirmation_character, decrypted_response = self.Decrypt_Response(response)
 
-            if decrypted_response[0] == 'o':
-                self.current_motor_position = int(decrypted_response[1])
+            if confirmation_character == 'o':
+                self.current_motor_position = int(decrypted_response[0])
                 self.current_wavelength = self.Convert_Step_Position_To_Wavelength(self.current_motor_position)
 
-                print('Current Motor Position is: ', self.current_motor_position)
                 return True, self.current_wavelength
 
     def Get_Motor_Limit_Status(self):
-        response = self.Query('K')
-        print(response)
-        decoded_response = self.Decrypt_Response(response)
+        self.Write_To_HR320('K')
+        response = self.Read_From_HR320(is_known_bytes = False, is_carriage_return_terminated = True)
+        confirmation_character, decoded_response = self.Decrypt_Response(response)
 
         decoded_status = None
-        if decoded_response[0] == 'o':
-            decoded_status = self.Decrypt_Limit_Status(decoded_response[1])
-        else:
+        if confirmation_character == 'o':
             decoded_status = self.Decrypt_Limit_Status(decoded_response[0])
+        else:
+            return False, -1, -1
 
         if decoded_status[4] or decoded_status[5]:
             if decoded_status[4]:
                 print("Limit on First Monochromator Hit")
-                return True, self.is_motor_moving_in_positive_direction
+                return True, True, self.is_motor_moving_in_positive_direction
             elif decoded_status[5]:
                 print("Limit on Second Monochromator Hit")
-                return True, self.is_motor_moving_in_positive_direction
+                return True, True, self.is_motor_moving_in_positive_direction
         else:
             print("No Limits Hit")
-            return False, self.is_motor_moving_in_positive_direction
+            return True, False, self.is_motor_moving_in_positive_direction
 
     def Stop_Motor(self):
-        response = self.Query('L')
+        self.Write_To_HR320('L')
+        response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
 
         if response == 'b':
-            print("Failed to Stop Motor")
             return False
         elif response == 'o':
-            print("Motor Stopping")
             return True
 
 class Time_Resolved_Spectroscopy_Controller(QObject):
@@ -377,6 +470,7 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
     hr320MotorStatusChanged = Signal()
     hr320CheckBacklashCorrection = Signal()
     hr320CurrentWavelengthChanged = Signal(int)
+    logMessage = Signal(str, str)
 
     def __init__(self):
         super().__init__()
@@ -401,6 +495,8 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
         self.is_hr320_calibrated = False
         self.is_hr320_motor_busy = False
         self.is_hr320_backlash_correction_needed = False
+
+        self.has_hr320_reached_target_wavelength = True
 
         self.is_calibration_cached = False
         self.Initialize_HR320_Calibration_Cache()
@@ -472,14 +568,24 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
         self.hr320_controller = HR320_Interface(self.hr320_gpib_address)
         is_booted, is_motor_initialized, is_motor_speed_set = self.hr320_controller.Initialize_HR320()
 
-        if is_booted and is_motor_initialized and is_motor_speed_set:
+        if is_booted:
+            self.logMessage.emit('HR320', 'Spectrometer Booted')
+        else:
+            self.logMessage.emit('HR320', 'Spectrometer Already Booted')
+
+        if is_motor_initialized:
+            self.logMessage.emit('HR320', 'Spectrometer Motor Initialized')
+        else:
+            self.logMessage.emit('HR320', 'Spectrometer Motor Failed to Start')
+
+        if is_motor_speed_set:
+            self.logMessage.emit('HR320', 'Spectrometer Motor Speed Set')
+        else:
+            self.logMessage.emit('HR320', 'Spectrometer Motor Failed to Set Speed')
+
+        if is_motor_initialized and is_motor_speed_set:
             self.is_hr320_connected = True
             self.hr320ConnectionChanged.emit()
-
-            # Timer for HR320 Motor Status
-            self.hr320_motor_timer = QTimer()
-            self.hr320_motor_timer.timeout.connect(self.update_HR320_motor_status)
-            self.hr320_motor_timer.start(1000)  # every 1 second
 
     @Slot(int)
     def calibrate_HR320(self, calibrated_wavelength):
@@ -491,6 +597,9 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
             self.hr320_current_wavelength = calibrated_wavelength
             self.Update_HR320_Calibration_Cache()
             self.hr320CurrentWavelengthChanged.emit(self.hr320_current_wavelength)
+            self.logMessage.emit('HR320', 'Spectrometer Position Calibrated')
+        else:
+            self.logMessage.emit('HR320', 'Spectrometer Failed to Calibrate')
         self.hr320CalibrationChanged.emit()
 
     @Slot(int)
@@ -503,8 +612,18 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
         is_motor_move_read = self.hr320_controller.Move_Motor_Relative(self.hr320_target_wavelength)
 
         if is_motor_move_read:
+            self.has_hr320_reached_target_wavelength = False
+            self.logMessage.emit('HR320', f'Spectrometer Moving To: {self.hr320_target_wavelength} nm')
+
             if self.hr320_target_wavelength < current_wavelength:
                 self.is_hr320_backlash_correction_needed = True
+
+            # Timer for HR320 Motor Status and Position
+            self.hr320_motor_timer = QTimer()
+            self.hr320_motor_timer.timeout.connect(self.update_HR320_motor_status)
+            self.hr320_motor_timer.start(1000)  # every 1 second
+        else:
+            self.logMessage.emit('HR320', 'Spectrometer Failed to Move')
 
     @Slot()
     def hr320_backlash_correction(self):
@@ -513,25 +632,43 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
                 is_motor_move_read = self.hr320_controller.Backlash_Correction()
                 if is_motor_move_read:
                     self.is_hr320_backlash_correction_needed = False
+                    self.logMessage.emit('HR320', 'Spectrometer Backlash Correction Initiated')
+                else:
+                    self.logMessage.emit('HR320', 'Spectrometer Backlash Correction Failed')
+
+    @Slot()
+    def stop_HR320_motor(self):
+        is_motor_stop_read = self.hr320_controller.Stop_Motor()
+
+        if is_motor_stop_read:
+            self.logMessage.emit('HR320', 'Spectrometer Motor Stopped')
 
     @Slot()
     def update_HR320_motor_status(self):
         is_motor_busy_read, motor_busy_status = self.hr320_controller.Is_Motor_Busy()
-        if self.is_hr320_backlash_correction_needed:
-            if not motor_busy_status:
-                self.is_hr320_motor_busy = motor_busy_status
-                self.hr320CheckBacklashCorrection.emit()
+        if is_motor_busy_read:
+            if self.is_hr320_backlash_correction_needed:
+                if not motor_busy_status:
+                    self.is_hr320_motor_busy = motor_busy_status
+                    self.hr320CheckBacklashCorrection.emit()
+                else:
+                    self.is_hr320_motor_busy = motor_busy_status
+                    self.hr320MotorStatusChanged.emit()
             else:
                 self.is_hr320_motor_busy = motor_busy_status
                 self.hr320MotorStatusChanged.emit()
-        else:
-            self.is_hr320_motor_busy = motor_busy_status
-            self.hr320MotorStatusChanged.emit()
 
         is_position_read, current_wavelength = self.hr320_controller.Read_Motor_Position()
         if is_position_read and self.is_hr320_calibrated:
             self.hr320_current_wavelength = current_wavelength
             self.hr320CurrentWavelengthChanged.emit(self.hr320_current_wavelength)
+
+            if not self.has_hr320_reached_target_wavelength:
+                if not self.is_hr320_motor_busy and not self.is_hr320_backlash_correction_needed:
+                    if self.hr320_current_wavelength == self.hr320_target_wavelength:
+                        self.has_hr320_reached_target_wavelength = True
+                        self.hr320_motor_timer.stop()
+                        self.logMessage.emit('HR320', f'Spectrometer Reached Target Of: {self.hr320_target_wavelength} nm')
 
 if __name__ == "__main__":
     # Set the Style
@@ -543,9 +680,15 @@ if __name__ == "__main__":
     # 2. Create the QML engine loader
     engine = QQmlApplicationEngine()
 
-    # --- Time Resolved Spectroscopy Interface Instantiation ---
+    logger = Instrument_Log()
     time_resolved_spectroscopy_controller = Time_Resolved_Spectroscopy_Controller()
+    time_resolved_spectroscopy_controller.logMessage.connect(logger.append_log)
+
+    # --- Time Resolved Spectroscopy Interface Instantiation --- #
     engine.rootContext().setContextProperty("trs_controller", time_resolved_spectroscopy_controller)
+
+    # -- Instantiation of Log String List as a QString List Model --- #
+    engine.rootContext().setContextProperty("logger", logger)
 
     # 3. Load the QML file
     engine.load('user_interface.qml')
