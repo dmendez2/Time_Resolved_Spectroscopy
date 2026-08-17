@@ -1,5 +1,5 @@
 [project]
-name = "PySide Project"
+name = "Time Resolved Spectroscopy"
 
 [tool.pyside6-project]
-files = ["main.py", "user_interface.qml"]
+files = ["NumericalDisplayWithUnits.qml", "StatusDisplay.qml", "StyledButton.qml", "StyledComboBox.qml", "StyledTextFieldWithUnits.qml", "main.py", "main.qml"]

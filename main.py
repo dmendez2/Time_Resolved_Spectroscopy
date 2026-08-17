@@ -117,18 +117,14 @@ class HR320_Emulator:
                     self.buffer = b'b'
 
     def read_bytes(self, bytes, break_on_termchar = False):
-        data = ''
-        decoded_buffer = self.buffer.decode('ascii')
-        for i in range(0, bytes):
-            self.current_char = decoded_buffer[self.buffer_index]
-            self.buffer_index += 1
-            data += self.current_char
+        flushed_buffer = self.buffer
+        self.buffer = b'b'
+        return flushed_buffer
 
-        if self.current_char == decoded_buffer[-1]:
-            self.buffer = b'b'
-            self.buffer_index = 0
-
-        return data.encode('ascii')
+    def read(self):
+        flushed_buffer = self.buffer
+        self.buffer = b'b'
+        return flushed_buffer.decode('ascii')
 
 class Instrument_Log(QAbstractListModel):
 
@@ -291,16 +287,14 @@ class HR320_Interface:
     def Boot_HR320(self):
         self.Write_To_HR320(' ')
         response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
-        print("Response:", response)
-        print()
+
         if response == 'TIMEOUT ERROR':
             self.Reboot_HR320()
         elif response == 'B':
             self.Write_To_HR320('O2000\x00')
             time.sleep(0.5) # Must wait 500 ms to ensure answer comes back
             response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
-            print("Response:", response)
-            print()
+
             if response == '*':
                 return True
             elif response == 'b':
@@ -316,8 +310,7 @@ class HR320_Interface:
     def Initialize_Motor(self):
         self.Write_To_HR320('A')
         response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
-        print("Response:", response)
-        print()
+
         if response == 'o':
             return True
         elif response == 'b':
@@ -326,15 +319,11 @@ class HR320_Interface:
     def Set_Motor_Speed(self):
         self.Write_To_HR320('B', self.motor_id, self.min_motor_frequency, self.max_motor_frequency, self.motor_ramp_time)
         response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 1)
-        print("Response:", response)
-        print()
+
         if response == 'o':
             is_motor_speed_read, min_motor_frequency, max_motor_frequency, motor_ramp_time = self.Read_Motor_Speed()
             if is_motor_speed_read:
                 if (min_motor_frequency == self.min_motor_frequency) and (max_motor_frequency == self.max_motor_frequency) and (motor_ramp_time == self.motor_ramp_time):
-                    print("Min motor frequency: ", self.min_motor_frequency)
-                    print("Max motor frequency: ", self.max_motor_frequency)
-                    print("Motor ramp time: ", self.motor_ramp_time)
                     return True
         elif response == 'b':
             return False
@@ -342,8 +331,7 @@ class HR320_Interface:
     def Read_Motor_Speed(self):
         self.Write_To_HR320('C', self.motor_id)
         response = self.Read_From_HR320(is_known_bytes = False, is_carriage_return_terminated = True)
-        print("Response:", response)
-        print()
+
         if response == 'b':
             return False, -1, -1, -1
         else:
@@ -358,7 +346,6 @@ class HR320_Interface:
     def Is_Motor_Busy(self):
         self.Write_To_HR320('E')
         response = self.Read_From_HR320(is_known_bytes = True, is_carriage_return_terminated = False, expected_bytes = 2)
-        print("Response: ", response)
 
         if response == 'b':
             return False, -1
@@ -691,7 +678,7 @@ if __name__ == "__main__":
     engine.rootContext().setContextProperty("logger", logger)
 
     # 3. Load the QML file
-    engine.load('user_interface.qml')
+    engine.load('main.qml')
 
     # 4. Safety check: Exit if the QML file failed to load properly
     if not engine.rootObjects():
