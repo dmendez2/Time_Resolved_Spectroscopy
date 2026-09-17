@@ -2,6 +2,7 @@
 import sys
 import time
 import pyvisa
+import ctypes
 import numpy as np
 from pathlib import Path
 from datetime import datetime
@@ -10,6 +11,486 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer, QAbstractListModel, Qt, QModelIndex, QByteArray
+
+class PH300_Interface():
+    def __init__(self):
+        # Load the PicoHarp C-Based Library
+        self.phlib = ctypes.WinDLL(r"C:/Windows/System32/phlib64.dll")
+
+        # To call each C-Based Function in the PicoHarp Library from Python, we must define the C-Type(s) for the input argument and return of each function
+        self.phlib.PH_GetErrorString.argtypes = [ctypes.c_char_p, ctypes.c_int]
+        self.phlib.PH_GetErrorString.restype = ctypes.c_int
+
+        self.phlib.PH_GetLibraryVersion.argtypes = [ctypes.c_char_p]
+        self.phlib.PH_GetLibraryVersion.restype = ctypes.c_int
+
+        self.phlib.PH_OpenDevice.argtypes = [ctypes.c_int, ctypes.c_char_p]
+        self.phlib.PH_OpenDevice.restype = ctypes.c_int
+
+        self.phlib.PH_CloseDevice.argtypes = [ctypes.c_int]
+        self.phlib.PH_CloseDevice.restype = ctypes.c_int
+
+        self.phlib.PH_Initialize.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_Initialize.restype = ctypes.c_int
+
+        self.phlib.PH_GetHardwareInfo.argtypes = [ctypes.c_int,  ctypes.c_char_p,  ctypes.c_char_p,  ctypes.c_char_p]
+        self.phlib.PH_GetHardwareInfo.restype = ctypes.c_int
+
+        self.phlib.PH_GetSerialNumber.argtypes = [ctypes.c_int, ctypes.c_char_p]
+        self.phlib.PH_GetSerialNumber.restype = ctypes.c_int
+
+        self.phlib.PH_GetBaseResolution.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
+        self.phlib.PH_GetBaseResolution.restype = ctypes.c_int
+
+        self.phlib.PH_GetFeatures.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        self.phlib.PH_GetFeatures.restype = ctypes.c_int
+
+        self.phlib.PH_Calibrate.argtypes = [ctypes.c_int]
+        self.phlib.PH_Calibrate.restype = ctypes.c_int
+
+        self.phlib.PH_SetInputCFD.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_SetInputCFD.restype = ctypes.c_int
+
+        self.phlib.PH_SetSyncDiv.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_SetSyncDiv.restype = ctypes.c_int
+
+        self.phlib.PH_SetSyncOffset.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_SetSyncOffset.restype = ctypes.c_int
+
+        self.phlib.PH_SetStopOverflow.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_SetStopOverflow.restype = ctypes.c_int
+
+        self.phlib.PH_SetBinning.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_SetBinning.restype = ctypes.c_int
+
+        self.phlib.PH_SetMultistopEnable.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_SetMultistopEnable.restype = ctypes.c_int
+
+        self.phlib.PH_SetOffset.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_SetOffset.restype = ctypes.c_int
+
+        self.phlib.PH_ClearHistMem.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_ClearHistMem.restype = ctypes.c_int
+
+        self.phlib.PH_StartMeas.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_StartMeas.restype = ctypes.c_int
+
+        self.phlib.PH_StopMeas.argtypes = [ctypes.c_int]
+        self.phlib.PH_StopMeas.restype = ctypes.c_int
+
+        self.phlib.PH_CTCStatus.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        self.phlib.PH_CTCStatus.restype = ctypes.c_int
+
+        self.phlib.PH_GetHistogram.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_uint), ctypes.c_int]
+        self.phlib.PH_GetHistogram.restype = ctypes.c_int
+
+        self.phlib.PH_GetResolution.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
+        self.phlib.PH_GetResolution.restype = ctypes.c_int
+
+        self.phlib.PH_GetCountRate.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        self.phlib.PH_GetCountRate.restype = ctypes.c_int
+
+        self.phlib.PH_GetFlags.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        self.phlib.PH_GetFlags.restype = ctypes.c_int
+
+        self.phlib.PH_GetElapsedMeasTime.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
+        self.phlib.PH_GetElapsedMeasTime.restype = ctypes.c_int
+
+        self.phlib.PH_GetWarnings.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        self.phlib.PH_GetWarnings.restype = ctypes.c_int
+
+        self.phlib.PH_GetWarningsText.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int]
+        self.phlib.PH_GetWarningsText.restype = ctypes.c_int
+
+        self.phlib.PH_GetHardwareDebugInfo.argtypes = [ctypes.c_int, ctypes.c_char_p]
+        self.phlib.PH_GetHardwareDebugInfo.restype = ctypes.c_int
+
+        self.phlib.PH_ReadFifo.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_uint), ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        self.phlib.PH_ReadFifo.restype = ctypes.c_int
+
+        self.phlib.PH_SetMarkerEdges.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_SetMarkerEdges.restype = ctypes.c_int
+
+        self.phlib.PH_SetMarkerEnable.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_SetMarkerEnable.restype = ctypes.c_int
+
+        self.phlib.PH_SetMarkerHoldofftime.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.phlib.PH_SetMarkerHoldofftime.restype = ctypes.c_int
+
+        # Initial Variables
+        self.device_index = 0
+
+        self.isOpened = False
+        self.isInitialized = False
+
+    def Get_Library_Version(self):
+        library_version = ctypes.create_string_buffer(8)
+        status = self.phlib.PH_GetLibraryVersion(library_version)
+        return status, library_version.value.decode()
+
+    def Get_Error_Code_Explanation(self, error_code):
+        # Create a C-Type string buffer for the error code
+        error_message = ctypes.create_string_buffer(40)
+
+        # Input the error code and the error message buffer. The buffer will have the explanation updated by reference
+        status = self.phlib.PH_GetErrorString(error_message, error_code)
+
+        if status == 0:
+            return error_message.value.decode()
+        else:
+            return None
+
+    def Open(self):
+        # Create a C-Type string buffer for the serial number
+        serial = ctypes.create_string_buffer(8)
+
+        # Open the device and get the serial number by reference
+        status = self.phlib.PH_OpenDevice(self.device_index, serial)
+
+        if status == 0:
+            self.isOpened = True
+
+        return status
+
+    def Close(self):
+        status = self.phlib.PH_CloseDevice(self.device_index)
+        return status
+
+    def Initialize(self, mode):
+        if not self.isOpened:
+            print("Trying to Initialize PicoHarp Before Opening")
+            return -1
+
+        status = self.phlib.PH_Initialize(self.device_index, mode)
+        if status == 0:
+            self.isInitialized = True
+
+        return status
+
+    def Get_Hardware_Info(self):
+        if not self.isInitialized:
+            print("Trying to Get Hardware Info from PicoHarp Before Initialization")
+            return -22, None, None, None
+
+        model = ctypes.create_string_buffer(16)
+        part_number = ctypes.create_string_buffer(8)
+        version  = ctypes.create_string_buffer(8)
+
+        status = self.phlib.PH_GetHardwareInfo(self.device_index, model, part_number, version)
+        if status == 0:
+            return status, model.value.decode(), part_number.value.decode(), version.value.decode()
+        else:
+            return status, None, None, None
+
+    def Get_Serial_Number(self):
+        if not self.isInitialized:
+            print("Trying to Get Serial Number from PicoHarp Before Initialization")
+            return -22, None
+
+        # Create a C-Type string buffer for the serial number
+        serial = ctypes.create_string_buffer(8)
+
+        # Pass the buffer into the GetSerialNumber function to update the serial number by reference
+        status = self.phlib.PH_GetSerialNumber(self.device_index, serial)
+
+        if status == 0:
+            return status, serial.value.decode()
+        else:
+            return status, None
+
+    def Get_Base_Resolution(self):
+        if not self.isInitialized:
+            print("Trying to Get Base Resolution from PicoHarp Before Initialization")
+            return -22, None
+
+        base_resolution = ctypes.c_double()
+        status = self.phlib.PH_GetBaseResolution(self.device_index, ctypes.byref(base_resolution))
+
+        if status == 0:
+            return status, base_resolution.value
+        else:
+            return status, None
+
+    def Get_Features(self):
+        if not self.isInitialized:
+            print("Trying to Get Features from PicoHarp Before Initialization")
+            return -22, None
+
+        features = ctypes.c_int()
+        status = self.phlib.PH_GetFeatures(self.device_index, ctypes.byref(features))
+
+        if status != 0:
+            return status, None
+
+        FEATURE_DLL = 0x0001
+        FEATURE_TTTR = 0x0002
+        FEATURE_MARKERS = 0x0004
+        FEATURE_LOWRES = 0x0008
+        FEATURE_TRIGOUT = 0x0010
+
+        feature_availability_status = {
+        "DLL": bool(features.value & FEATURE_DLL),
+        "TTTR": bool(features.value & FEATURE_TTTR),
+        "Markers": bool(features.value & FEATURE_MARKERS),
+        "Low Resolution": bool(features.value & FEATURE_LOWRES),
+        "Trigger Output": bool(features.value & FEATURE_TRIGOUT),
+        }
+
+        return status, feature_availability_status
+
+    def Calibrate(self):
+        if not self.isInitialized:
+            print("Trying to Calibrate PicoHarp Before Initialization")
+            return -22
+
+        status = self.phlib.PH_Calibrate(self.device_index)
+        return status
+
+    def Set_Input_CFD(self, channel, level, zero_cross):
+            if not self.isInitialized:
+                print("Trying to Set Input CFD Before Initialization")
+                return -22
+
+            status = self.phlib.PH_SetInputCFD(self.device_index, channel, level, zero_cross)
+            return status
+
+    def Set_Sync_Divider(self, div):
+        if not self.isInitialized:
+            print("Trying to Set Synchronization Divider Before Initialization")
+            return -22
+
+        status = self.phlib.PH_SetSyncDiv(self.device_index, div)
+        return status
+
+    def Set_Sync_Offset(self, offset):
+        if not self.isInitialized:
+            print("Trying to Set Synchronization Offset Before Initialization")
+            return -22
+
+        status = self.phlib.PH_SetSyncOffset(self.device_index, offset)
+        return status
+
+    def Set_Stop_Overflow(self, stop_overflow, stop_count):
+        if not self.isInitialized:
+            print("Trying to Set Stop Overflow Before Initialization")
+            return -22
+
+        status = self.phlib.PH_SetStopOverflow(self.device_index, stop_overflow, stop_count)
+        return status
+
+    def Set_Binning(self, binning):
+        if not self.isInitialized:
+            print("Trying to Set Binning Before Initialization")
+            return -22
+
+        status = self.phlib.PH_SetBinning(self.device_index, binning)
+        return status
+
+    def Set_Multistop_Enable(self, enable):
+        if not self.isInitialized:
+            print("Trying to Set Multistop Enable Before Initialization")
+            return -22
+
+        status = self.phlib.PH_SetMultistopEnable(self.device_index, enable)
+        return status
+
+    def SetOffset(self, offset):
+        if not self.isInitialized:
+            print("Trying to Set Offset Before Initialization")
+            return -22
+
+        status = self.phlib.PH_SetOffset(self.device_index, offset)
+        return status
+
+    def Clear_Histogram_Memory(self, block):
+        if not self.isInitialized:
+            print("Trying to Clear Histogram Memory Before Initialization")
+            return -22
+
+        status = self.phlib.PH_ClearHistMem(self.device_index, block)
+        return status
+
+    def Start_Measurement(self, tacq):
+        if not self.isInitialized:
+            print("Trying to Start Measurement Before Initialization")
+            return -22
+
+        status = self.phlib.PH_StartMeas(self.device_index, tacq)
+        return status
+
+    def Stop_Measurement(self):
+        if not self.isInitialized:
+            print("Trying to Stop Measurement Before Initialization")
+            return -22
+
+        status = self.phlib.PH_StopMeas(self.device_index)
+        return status
+
+    def Get_CTC_Status(self):
+        if not self.isInitialized:
+            print("Trying to Get CTC Status Before Initialization")
+            return -22
+
+        ctc_status = ctypes.c_int()
+        status = self.phlib.PH_CTCStatus(self.device_index, ctypes.byref(ctc_status))
+
+        if status == 0:
+            return status, ctc_status.value
+        else:
+            return status, None
+
+    def Get_Histogram(self, block):
+        if not self.isInitialized:
+            print("Trying to Get Histogram Before Initialization")
+            return -22
+
+        histogram_counts = ctypes.c_uint()
+        status = self.phlib.PH_GetHistogram(self.device_index, ctypes.byref(histogram_counts), block)
+
+        if status == 0:
+            return status, histogram_counts.value
+        else:
+            return status, None
+
+    def Get_Resolution(self):
+        if not self.isInitialized:
+            print("Trying to Get Resolution Before Initialization")
+            return -22
+
+        resolution = ctypes.c_double()
+        status = self.phlib.PH_GetResolution(self.device_index, ctypes.byref(resolution))
+
+        if status == 0:
+            return status, resolution.value
+        else:
+            return status, None
+
+    def Get_Count_Rate(self, channel):
+        if not self.isInitialized:
+            print("Trying to Get Count Rate Before Initialization")
+            return -22
+
+        count_rate = ctypes.c_int()
+        status = self.phlib.PH_GetCountRate(self.device_index, channel, ctypes.byref(count_rate))
+
+        if status == 0:
+            return status, count_rate.value
+        else:
+            return status, None
+
+    def Get_Flags(self):
+        if not self.isInitialized:
+            print("Trying to Get Flags Before Initialization")
+            return -22
+
+        flags = ctypes.c_int()
+        status = self.phlib.PH_GetFlags(self.device_index, ctypes.byref(flags))
+
+        if status != 0:
+            return status, None
+
+        FLAG_FIFOFULL = 0x0003  # T-modes
+        FLAG_OVERFLOW = 0x0040  # Histomode
+        FLAG_SYSERROR = 0x0100  # Hardware problem
+
+        flag_status = {
+        "Fifo Full": bool(flags.value & FLAG_FIFOFULL),
+        "Overflow": bool(flags.value & FLAG_OVERFLOW),
+        "System Error": bool(flags.value & FLAG_SYSERROR),
+        }
+
+        return status, flag_status
+
+    def Get_Elapsed_Measurement_Time(self):
+        if not self.isInitialized:
+            print("Trying to Get Elapsed Measurement Time Before Initialization")
+            return -22
+
+        elapsed_time = ctypes.c_double()
+        status = self.phlib.PH_GetElapsedMeasTime(self.device_index, ctypes.byref(elapsed_time))
+
+        if status == 0:
+            return status, elapsed_time.value
+        else:
+            return status, None
+
+    def Get_Warnings(self):
+        if not self.isInitialized:
+            print("Trying to Get Warnings Before Initialization")
+            return -22
+
+        warnings = ctypes.c_int()
+        status = self.phlib.PH_GetWarnings(self.device_index, ctypes.byref(warnings))
+
+        if status == 0:
+            return status, warnings.value
+        else:
+            return status, None
+
+    def Get_Warnings_Text(self, warning):
+        if not self.isInitialized:
+            print("Trying to Get Warning Texts Before Initialization")
+            return -22
+
+        warning_text = ctypes.create_string_buffer(16384)
+        status = self.phlib.PH_GetWarningsText(self.device_index, warning_text, warning)
+
+        if status == 0:
+            return status, warning_text.value.decode()
+        else:
+            return status, None
+
+    def Get_Hardware_Debug_Info(self):
+        if not self.isInitialized:
+            print("Trying to Get Hardware Debug Info Before Initialization")
+            return -22
+
+        debug_info = ctypes.create_string_buffer(16384)
+        status = self.phlib.PH_GetHardwareDebugInfo(self.device_index, debug_info)
+
+        if status == 0:
+            return status, debug_info.value.decode()
+        else:
+            return status, None
+
+    def Read_Fifo(self, count):
+        if not self.isInitialized:
+            print("Trying to Read Fifo Before Initialization")
+            return -22
+
+        buffer = (ctypes.c_uint * count)()
+        nactual = ctypes.c_int()
+
+        status = self.phlib.PH_ReadFifo(self.device_index, buffer, count, nactual)
+
+        if status == 0:
+            return status, buffer, nactual
+        else:
+            return status, None, None
+
+    def Set_Marker_Edges(self, me0, me1, me2, me3):
+        if not self.isInitialized:
+            print("Trying to Set Marker Edges Before Initialization")
+            return -22
+
+        status = self.phlib.PH_SetMarkerEdges(self.device_index, me0, me1, me2, me3)
+        return status
+
+    def Set_Marker_Enable(self, en0, en1, en2, en3):
+        if not self.isInitialized:
+            print("Trying to Set Marker Edges Before Initialization")
+            return -22
+
+        status = self.phlib.PH_SetMarkerEnable(self.device_index, en0, en1, en2, en3)
+        return status
+
+    def Set_Marker_Hold_Off_Time(self, hold_off_time):
+        if not self.isInitialized:
+            print("Trying to Set Marker Hold Off Time")
+            return -22
+
+        status = self.phlib.PH_SetMarkerHoldofftime(self.device_index, hold_off_time)
+        return status
 
 class HR320_Emulator:
     def __init__(self, gpib_address):
