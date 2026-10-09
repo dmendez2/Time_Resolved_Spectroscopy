@@ -83,7 +83,7 @@ ApplicationWindow {
                 Layout.preferredWidth: 320
                 rightPadding: 10
                 clip: true
-                height: 200
+                height:200
 
                 // Force the horizontal scroll bar off, keep vertical active
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
@@ -338,24 +338,178 @@ ApplicationWindow {
                         }
                     }
 
+
                     // MODULE 2: PLACEHOLDER FOR PICOHARP 300
                     Rectangle {
+                        id: ph300ControlBox
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 140
-                        color: "#2D2D2D"
-                        opacity: 0.5 // Dimmed to show it is a future expansion
+                        Layout.preferredHeight: 600 // Use preferredHeight instead of fillHeight if parent isn't a Layout
+                        color: "#000000"
+                        border.color: "#2D2D2D"
+                        border.width: 1
                         radius: 4
 
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 15
+                            spacing: 10
 
                             Label {
-                                text: "PicoHarp 300 (Future Work)"
-                                color: "#FFFFFF"
+                                text: "PicoHarp 300"
+                                color: "#888888"
                                 font.bold: true
                                 font.pixelSize: 16
                             }
+                            // Button to initialize the PH300 Photon Counter
+                            StyledButton {
+                                id: ph300Start
+                                enabled: !trs_controller.isPH300Started
+                                hoverEnabled: !trs_controller.isPH300Started
+                                displayText: "Start PH300"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 35
+
+                                buttonColor: "#2CFF05"
+                                pressedColor: "#339152"
+
+                                onPressed: {
+                                    trs_controller.start_picoharp()
+                                }
+                            }
+                            // Button to close the PH300 Photon Counter
+                            StyledButton {
+                                id: ph300CloseButton
+                                enabled: trs_controller.isPH300Started
+                                hoverEnabled: trs_controller.isPH300Started
+                                displayText: "Close PH300" //
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 35
+
+                                buttonColor: "#2CFF05"
+                                pressedColor: "#339152"
+
+                                onPressed: {
+                                    trs_controller.close_picoharp()
+                                }
+                            }
+
+                            Label {
+                                text: "PicoHarp Status"
+                                color: "#888888"
+                                font.pixelSize: 10
+                                font.bold: true
+                            }
+
+                            NumericalDisplayWithUnits{
+                                id: serialDisplay
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 40
+                                displayValue: trs_controller.isPH300Started ? "CONNECTED" : "DISCONNECTED"
+
+                                displayUnit: ""
+                                displayColor: trs_controller.isPH300Started ? "#2CFF05" : "#FF3131"
+                            }
+                        ColumnLayout {
+                            spacing: 2
+                            Label {
+                                text: "CFD Channel"
+                                color: "#888888"
+                                font.pixelSize: 10
+                                font.bold: true
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+
+                            StyledTextFieldWithUnits{
+                                id: cfdChannel
+                                Layout.fillWidth: true
+
+                                displayText: "0.0" // Default startupvalue
+                                displayColor: "#FFFFFF"
+
+
+                               // Channel 1 or 2
+                                bottomAllowedVal: 0
+                                topAllowedVal: 1
+                                allowedDecimalPlaces: 0
+                            }
+                            Label {
+                                text: "CFD Level"
+                                color: "#888888"
+                                font.pixelSize: 10
+                                font.bold: true
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+                            StyledTextFieldWithUnits{
+                                id: cfdLevel
+                                Layout.fillWidth: true
+
+                                displayText: "0.0" // Default startupvalue
+                                displayColor: "#FFFFFF"
+
+
+
+                                bottomAllowedVal: 0.0
+                                topAllowedVal: 1300.0
+                                allowedDecimalPlaces: 1
+                            }
+
+                            Label {
+                                text: "CFD Zero Cross"
+                                color: "#888888"
+                                font.pixelSize: 10
+                                font.bold: true
+                                Layout.alignment: Qt.AlignVCenter
+                            }
+                            StyledTextFieldWithUnits{
+                                id: cfdZeroCross
+                                Layout.fillWidth: true
+
+                                displayText: "0.0" // Default startupvalue
+                                displayColor: "#FFFFFF"
+
+
+
+                                bottomAllowedVal: 0.0
+                                topAllowedVal: 1300.0
+                                allowedDecimalPlaces: 1
+                            }
+
+
+                            // Button to set CFD
+                            StyledButton {
+                                id: cfdMoveButton
+                                displayText: "Set CFD"
+                                enabled: trs_controller.isPH300Started && !trs_controller.PH_StartMeas
+                                hoverEnabled: trs_controller.isPH300Started && !trs_controller.PH_StartMeas
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 25
+
+                                buttonColor: "#2CFF05"
+                                pressedColor: "#339152"
+
+                                onPressed:{
+                                    trs_controller.set_cfd(cfdChannel.text, cfdLevel.text, cfdZeroCross.text)
+                                }
+                            }
+                        }
+                            // Button to calibrate the PH300
+                            StyledButton{
+                                id: ph300CalibrateButton
+                                enabled: trs_controller.isPH300Started
+                                hoverEnabled: trs_controller.isPH300Started
+                                displayText: "Calibrate PH300" //
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 35
+
+                                buttonColor: "#2CFF05"
+                                pressedColor: "#339152"
+
+                                onPressed: {
+                                    trs_controller.calibrate_picoharp
+                                }
+                            }
+                        }
+
 
                             Label {
                                 text: "TCSPC modules will plug in here."
@@ -363,7 +517,10 @@ ApplicationWindow {
                                 font.pixelSize: 12
                             }
                         }
-                    }
+
+
+
+
 
                     // MODULE 3: PLACEHOLDER FOR SR400
                     Rectangle {

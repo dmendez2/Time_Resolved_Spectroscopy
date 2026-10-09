@@ -12,7 +12,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer, QAbstractListModel, Qt, QModelIndex, QByteArray
 
-class PH300_Interface():
+class PH300_CTypes_Interface():
     def __init__(self):
         # Load the PicoHarp C-Based Library
         self.phlib = ctypes.WinDLL(r"C:/Windows/System32/phlib64.dll")
@@ -105,8 +105,8 @@ class PH300_Interface():
         self.phlib.PH_GetHardwareDebugInfo.argtypes = [ctypes.c_int, ctypes.c_char_p]
         self.phlib.PH_GetHardwareDebugInfo.restype = ctypes.c_int
 
-        self.phlib.PH_ReadFifo.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_uint), ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
-        self.phlib.PH_ReadFifo.restype = ctypes.c_int
+        self.phlib.PH_ReadFiFo.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_uint), ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        self.phlib.PH_ReadFiFo.restype = ctypes.c_int
 
         self.phlib.PH_SetMarkerEdges.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.phlib.PH_SetMarkerEdges.restype = ctypes.c_int
@@ -114,8 +114,8 @@ class PH300_Interface():
         self.phlib.PH_SetMarkerEnable.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
         self.phlib.PH_SetMarkerEnable.restype = ctypes.c_int
 
-        self.phlib.PH_SetMarkerHoldofftime.argtypes = [ctypes.c_int, ctypes.c_int]
-        self.phlib.PH_SetMarkerHoldofftime.restype = ctypes.c_int
+        #self.phlib.PH_SetMarkerHoldofftime.argtypes = [ctypes.c_int, ctypes.c_int]
+        #self.phlib.PH_SetMarkerHoldofftime.restype = ctypes.c_int
 
         # Initial Variables
         self.device_index = 0
@@ -453,7 +453,7 @@ class PH300_Interface():
         else:
             return status, None
 
-    def Read_Fifo(self, count):
+    def Read_FiFo(self, count):
         if not self.isInitialized:
             print("Trying to Read Fifo Before Initialization")
             return -22
@@ -461,7 +461,7 @@ class PH300_Interface():
         buffer = (ctypes.c_uint * count)()
         nactual = ctypes.c_int()
 
-        status = self.phlib.PH_ReadFifo(self.device_index, buffer, count, nactual)
+        status = self.phlib.PH_ReadFiFo(self.device_index, buffer, count, nactual)
 
         if status == 0:
             return status, buffer, nactual
@@ -484,13 +484,13 @@ class PH300_Interface():
         status = self.phlib.PH_SetMarkerEnable(self.device_index, en0, en1, en2, en3)
         return status
 
-    def Set_Marker_Hold_Off_Time(self, hold_off_time):
-        if not self.isInitialized:
-            print("Trying to Set Marker Hold Off Time")
-            return -22
+    #def Set_Marker_Hold_Off_Time(self, hold_off_time):
+    #    if not self.isInitialized:
+    #        print("Trying to Set Marker Hold Off Time")
+    #        return -22
 
-        status = self.phlib.PH_SetMarkerHoldofftime(self.device_index, hold_off_time)
-        return status
+    #    status = self.phlib.PH_SetMarkerHoldofftime(self.device_index, hold_off_time)
+    #    return status
 
 class HR320_Emulator:
     def __init__(self, gpib_address):
@@ -938,6 +938,8 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
     hr320MotorStatusChanged = Signal()
     hr320CheckBacklashCorrection = Signal()
     hr320CurrentWavelengthChanged = Signal(int)
+
+    ph300Started = Signal()
     logMessage = Signal(str, str)
 
     def __init__(self):
@@ -954,7 +956,6 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
 
         self.hr320_controller = None
         self.sr400_controller = None
-        self.ph300_controller = None
 
         self.hr320_current_wavelength = 0
         self.hr320_target_wavelength = 0
@@ -968,6 +969,10 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
 
         self.is_calibration_cached = False
         self.Initialize_HR320_Calibration_Cache()
+
+        self.ph300_controller = PH300_CTypes_Interface()
+
+        self.is_ph300_started = False
 
     def Initialize_HR320_Calibration_Cache(self):
         cache_file = Path.cwd() / 'Cache' / 'cache.txt'
@@ -1137,6 +1142,32 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
                         self.has_hr320_reached_target_wavelength = True
                         self.hr320_motor_timer.stop()
                         self.logMessage.emit('HR320', f'Spectrometer Reached Target Of: {self.hr320_target_wavelength} nm')
+
+    #### PicoHarp Controls Below ###
+    @Property(bool, notify = ph300Started)
+    def isPH300Started(self):
+        return self.is_ph300_started
+
+    @Slot()
+    def start_picoharp(self, mode = 0):
+        open_flag = self.ph300_controller.Open()
+        initialize_flag = self.ph300_controller.Initialize(mode)
+        if (open_flag == 0) and (initialize_flag == 0):
+                self.is_ph300_started = True
+                self.ph300Started.emit()
+    @Slot()
+    def close_picoharp(self):
+        close_flag = self.ph300_controller.Close()
+        if (close_flag == 0):
+                self.is_ph300_started = False
+                self.ph300Started.emit()
+    @Slot()
+    def set_cfd(self, channel, level, zero_cross):
+            self.Set_Input_CFD(channel, level, zero_cross)
+
+    @Slot()
+    def calibrate_picoharp(self):
+        self.Calibrate()
 
 if __name__ == "__main__":
     # Set the Style
