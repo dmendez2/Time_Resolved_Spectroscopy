@@ -342,25 +342,61 @@ ApplicationWindow {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 140
-                        color: "#2D2D2D"
-                        opacity: 0.5 // Dimmed to show it is a future expansion
+                        color: "#000000"
+                        border.color: "#2D2D2D"
+                        border.width: 1
                         radius: 4
 
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 15
 
-                            Label {
-                                text: "PicoHarp 300 (Future Work)"
-                                color: "#FFFFFF"
-                                font.bold: true
-                                font.pixelSize: 16
+                            // Button to initialize the PH300 Photon Counter
+                            StyledButton {
+                                id: ph300Start
+                                enabled: !trs_controller.isPH300Started
+                                hoverEnabled: !trs_controller.isPH300Started
+                                displayText: "Start PH300"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 35
+
+                                buttonColor: "#2CFF05"
+                                pressedColor: "#339152"
+
+                                onPressed: {
+                                    trs_controller.start_picoharp()
+                                }
+                            }
+
+                            // Button to close the PH300 Photon Counter
+                            StyledButton {
+                                id: ph300CloseButton
+                                enabled: trs_controller.isPH300Started
+                                hoverEnabled: trs_controller.isPH300Started
+                                displayText: "Close PH300"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 35
+
+                                buttonColor: "#2CFF05"
+                                pressedColor: "#339152"
+
+                                onPressed: {
+                                    trs_controller.close_picoharp()
+                                }
                             }
 
                             Label {
-                                text: "TCSPC modules will plug in here."
+                                text: "PicoHarp Connection Status:"
                                 color: "#888888"
-                                font.pixelSize: 12
+                                font.pixelSize: 10
+                                font.bold: true
+                            }
+
+                            StatusDisplay{
+                                id: isPh300StartedDisplay
+                                Layout.fillWidth: true
+                                displayText: trs_controller.isPH300Started ? "CONNECTED" : "DISCONNECTED"
+                                displayColor: trs_controller.isHR320Busy ?  "#2CFF05" : "#FF3131"
                             }
                         }
                     }
