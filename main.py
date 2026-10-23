@@ -932,6 +932,7 @@ class HR320_Interface:
             return True
 
 class Time_Resolved_Spectroscopy_Controller(QObject):
+    #### HR320 Signals ###
     gpibAddressesChanged = Signal()
     hr320ConnectionChanged = Signal()
     hr320CalibrationChanged = Signal()
@@ -939,7 +940,11 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
     hr320CheckBacklashCorrection = Signal()
     hr320CurrentWavelengthChanged = Signal(int)
 
+    ### Picoharp Signals ###
     ph300Started = Signal()
+    ph300CountRateChanged = Signal()
+
+    ### Logger Signals ###
     logMessage = Signal(str, str)
 
     def __init__(self):
@@ -949,13 +954,13 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
 
         self.hr320_gpib_address = None
         self.sr400_gpib_address = None
-        self.ph300_gpib_address = None
 
         self.resource_manager = pyvisa.ResourceManager()
         self.gpib_addresses = [""]
 
         self.hr320_controller = None
         self.sr400_controller = None
+        self.ph300_controller = None
 
         self.hr320_current_wavelength = 0
         self.hr320_target_wavelength = 0
@@ -970,9 +975,9 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
         self.is_calibration_cached = False
         self.Initialize_HR320_Calibration_Cache()
 
-        self.ph300_controller = PH300_CTypes_Interface()
-
+        self.ph300_laser_count_rate = 0
         self.is_ph300_started = False
+        self.ph300_count_rate_timer = None
 
     def Initialize_HR320_Calibration_Cache(self):
         cache_file = Path.cwd() / 'Cache' / 'cache.txt'
@@ -1148,26 +1153,48 @@ class Time_Resolved_Spectroscopy_Controller(QObject):
     def isPH300Started(self):
         return self.is_ph300_started
 
+    @Property(float, notify = ph300CountRateChanged)
+    def ph300LaserCountRate(self):
+        return self.ph300_laser_count_rate
+
     @Slot()
     def start_picoharp(self, mode = 0):
+        # Initialize the PicoHarp Controller
+        self.ph300_controller = PH300_CTypes_Interface()
+
+
+        # Attempt to open and intialize the PicoHarp
         open_flag = self.ph300_controller.Open()
         initialize_flag = self.ph300_controller.Initialize(mode)
-        if (open_flag == 0) and (initialize_flag == 0):
-                self.is_ph300_started = True
-                self.ph300Started.emit()
+        calibrate_flag = self.ph300_controller.Calibrate()
+        sync_flag = self.ph300_controller.Set_Sync_Divider(8)
+        cfd_flag = self.ph300_controller.Set_Input_CFD(0, 0, 1)
+
+
+        # If successfully opened and initialized, emit a signal to QML to update all UI elements accordingly
+        if (open_flag == 0) and (initialize_flag == 0) and (calibrate_flag == 0) and (sync_flag == 0) and (cfd_flag == 0):
+            self.is_ph300_started = True
+            self.ph300Started.emit()
+
+            self.ph300_count_rate_timer = QTimer()
+            self.ph300_count_rate_timer.timeout.connect(self.get_laser_count_rate)
+            self.ph300_count_rate_timer.start(1000)
+
     @Slot()
     def close_picoharp(self):
         close_flag = self.ph300_controller.Close()
         if (close_flag == 0):
-                self.is_ph300_started = False
-                self.ph300Started.emit()
-    @Slot()
-    def set_cfd(self, channel, level, zero_cross):
-            self.Set_Input_CFD(channel, level, zero_cross)
+            self.is_ph300_started = False
+            self.ph300Started.emit()
 
     @Slot()
-    def calibrate_picoharp(self):
-        self.Calibrate()
+    def get_laser_count_rate(self):
+        count_flag, count_rate = self.ph300_controller.Get_Count_Rate(0)
+        if (count_flag == 0):
+            self.ph300_laser_count_rate = count_rate*1e-6
+            self.ph300CountRateChanged.emit()
+
+
 
 if __name__ == "__main__":
     # Set the Style
